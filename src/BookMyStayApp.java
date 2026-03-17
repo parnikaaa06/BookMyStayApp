@@ -1,27 +1,17 @@
-
+package com.bookmystay.app;
 
 import java.util.*;
 
 /**
- * UC8: Booking History & Reporting
+ * UC9: Error Handling & Validation
  */
 public class BookMyStayApp {
 
-    // ===== ROOM =====
-    static abstract class Room {
-        protected String type;
-        protected int beds;
-        protected double price;
-
-        public Room(String type, int beds, double price) {
-            this.type = type;
-            this.beds = beds;
-            this.price = price;
+    // ===== CUSTOM EXCEPTION =====
+    static class BookingException extends Exception {
+        public BookingException(String message) {
+            super(message);
         }
-    }
-
-    static class SingleRoom extends Room {
-        public SingleRoom() { super("Single Room", 1, 1000); }
     }
 
     // ===== INVENTORY =====
@@ -33,11 +23,21 @@ public class BookMyStayApp {
         }
 
         public int getAvailability(String type) {
-            return inventory.getOrDefault(type, 0);
+            return inventory.getOrDefault(type, -1);
         }
 
-        public void reduceRoom(String type) {
-            inventory.put(type, inventory.get(type) - 1);
+        public void reduceRoom(String type) throws BookingException {
+            int count = inventory.getOrDefault(type, -1);
+
+            if (count <= 0) {
+                throw new BookingException("No rooms available for " + type);
+            }
+
+            inventory.put(type, count - 1);
+        }
+
+        public boolean isValidRoom(String type) {
+            return inventory.containsKey(type);
         }
     }
 
@@ -70,9 +70,8 @@ public class BookMyStayApp {
         }
     }
 
-    // ===== BOOKING HISTORY (NEW) =====
+    // ===== HISTORY =====
     static class BookingHistory {
-
         private List<Reservation> history = new ArrayList<>();
 
         public void add(Reservation r) {
@@ -84,6 +83,25 @@ public class BookMyStayApp {
         }
     }
 
+    // ===== VALIDATOR (NEW) =====
+    static class BookingValidator {
+
+        public void validate(Reservation r, RoomInventory inventory) throws BookingException {
+
+            if (r.guestName == null || r.guestName.isEmpty()) {
+                throw new BookingException("Guest name cannot be empty");
+            }
+
+            if (!inventory.isValidRoom(r.roomType)) {
+                throw new BookingException("Invalid room type: " + r.roomType);
+            }
+
+            if (inventory.getAvailability(r.roomType) <= 0) {
+                throw new BookingException("No availability for " + r.roomType);
+            }
+        }
+    }
+
     // ===== BOOKING SERVICE =====
     static class BookingService {
 
@@ -91,6 +109,7 @@ public class BookMyStayApp {
         private int idCounter = 1;
 
         private BookingHistory history;
+        private BookingValidator validator = new BookingValidator();
 
         public BookingService(BookingHistory history) {
             this.history = history;
@@ -102,7 +121,9 @@ public class BookMyStayApp {
 
                 Reservation r = queue.getNext();
 
-                if (inventory.getAvailability(r.roomType) > 0) {
+                try {
+                    // VALIDATION FIRST (Fail-fast)
+                    validator.validate(r, inventory);
 
                     String roomId = r.roomType.substring(0, 2).toUpperCase() + idCounter++;
 
@@ -112,44 +133,15 @@ public class BookMyStayApp {
                         inventory.reduceRoom(r.roomType);
 
                         r.reservationId = roomId;
-
-                        // store in history
                         history.add(r);
 
                         System.out.println("Confirmed: " + r.guestName + " → " + roomId);
                     }
 
-                } else {
-                    System.out.println("Failed: " + r.guestName);
+                } catch (BookingException e) {
+                    // Graceful failure
+                    System.out.println("Error for " + r.guestName + ": " + e.getMessage());
                 }
-            }
-        }
-    }
-
-    // ===== REPORT SERVICE (NEW) =====
-    static class ReportService {
-
-        public void showAllBookings(BookingHistory history) {
-
-            System.out.println("\n--- Booking History ---");
-
-            for (Reservation r : history.getAll()) {
-                System.out.println(r.guestName + " | " + r.roomType + " | " + r.reservationId);
-            }
-        }
-
-        public void summaryReport(BookingHistory history) {
-
-            Map<String, Integer> countMap = new HashMap<>();
-
-            for (Reservation r : history.getAll()) {
-                countMap.put(r.roomType, countMap.getOrDefault(r.roomType, 0) + 1);
-            }
-
-            System.out.println("\n--- Booking Summary ---");
-
-            for (String type : countMap.keySet()) {
-                System.out.println(type + " → " + countMap.get(type));
             }
         }
     }
@@ -158,23 +150,26 @@ public class BookMyStayApp {
     public static void main(String[] args) {
 
         RoomInventory inventory = new RoomInventory();
-        inventory.addRoom("Single Room", 3);
+        inventory.addRoom("Single Room", 2);
 
         BookingQueue queue = new BookingQueue();
 
+        // valid
         queue.addRequest(new Reservation("Alice", "Single Room"));
-        queue.addRequest(new Reservation("Bob", "Single Room"));
+
+        // invalid room
+        queue.addRequest(new Reservation("Bob", "Luxury Room"));
+
+        // empty name
+        queue.addRequest(new Reservation("", "Single Room"));
+
+        // no availability
         queue.addRequest(new Reservation("Charlie", "Single Room"));
+        queue.addRequest(new Reservation("David", "Single Room"));
 
         BookingHistory history = new BookingHistory();
 
         BookingService service = new BookingService(history);
         service.processBookings(queue, inventory);
-
-        // UC8 reporting
-        ReportService report = new ReportService();
-
-        report.showAllBookings(history);
-        report.summaryReport(history);
     }
 }
